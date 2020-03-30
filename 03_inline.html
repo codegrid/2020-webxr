@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>=^.^=</title>
+<style>
+body {margin: 0;}
+canvas{display: block;}
+#startButton{font-size: 50px;}
+</style>
+</head>
+<body>
+
+<!-- WebXR を起動するためには、ユーザーが意図して起動するための「ボタン」が必須。-->
+<button type="button" id="startButton">click to start</button>
+<!-- WebXR の描画結果は WebGL の canvas となる。-->
+<canvas id="xrCanvas"></canvas>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.113.2/build/three.module.js';
+
+const width  = window.innerWidth;
+const height = window.innerHeight;
+const $button = document.getElementById( 'startButton' );
+
+( async () => {
+
+  // 任意のモードが利用可能かを調べる
+  const isInlineSupported = navigator.xr && await navigator.xr.isSessionSupported( 'inline' );
+
+  // モードが利用できなければ起動ボタンを無効化
+  $button.disabled = ! isInlineSupported;
+
+  // ユーザーが操作して初めて WebXR を起動できる
+  $button.addEventListener( 'click', onEnterAR );
+
+  async function onEnterAR() {
+
+    $button.style.display = 'none';
+
+    const xrSession = navigator.xr && await navigator.xr.requestSession( 'inline' );
+
+    // 本来は `getContext( 'webgl' )` で gl コンテキストを引き出す際に
+    // オプションとして「`xrCompatible: true`」を明示する必要がある。
+    // three.js では常に「`xrCompatible: true`」のオプションがついているので
+    // ここでは特別な設定をせずに XR として利用することができる
+    const renderer = new THREE.WebGLRenderer( { canvas: xrCanvas } );
+    renderer.autoClear = false;
+    renderer.setSize( width, height );
+
+    const gl = renderer.getContext();
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    camera.matrixAutoUpdate = false;
+
+    scene.add( new THREE.GridHelper( 100, 100 ) );
+
+    const box = new THREE.Mesh(
+      new THREE.BoxBufferGeometry( .2, .2, .2 ),
+      new THREE.MeshNormalMaterial()
+    );
+    scene.add( box );
+
+    // 「デバイスのカメラから取り込まれた現実の風景」の受け先となる、baseLayer を作る。
+    const xrWebGLLayer = new XRWebGLLayer( xrSession, gl );
+    // updateRenderState を設定していない場合、`xrSession.requestAnimationFrame` が呼ばれないので注意
+    xrSession.updateRenderState( { baseLayer: xrWebGLLayer } );
+
+    // インラインモードでは、local は利用できない。viewer を指定する。
+    // また、viewer ではユーザーなどが外から視点を動かすことになる。
+    const referenceSpace = await xrSession.requestReferenceSpace( 'viewer' );
+
+    // mousemove で視点を動かす。
+    // モバイル端末用に必要に応じて touch イベントにもバインドする
+    const LOOK_SPEED = 0.0025;
+    // const orientation = new THREE.Euler( 0, 0, 0, 'YXZ' );
+    let lookYaw = 0;
+    let lookPitch = 0;
+    xrCanvas.addEventListener( 'mousemove', ( event ) => {
+
+      const dx = event.movementX;
+      const dy = event.movementY;
+
+      lookYaw += dx * LOOK_SPEED; // yaw
+      lookPitch += dy * LOOK_SPEED;// pitch
+      if ( lookPitch < - Math.PI * 0.5 ) lookPitch = - Math.PI * 0.5;
+      if ( lookPitch >   Math.PI * 0.5 ) lookPitch =   Math.PI * 0.5;
+
+    } );
+
+    // `window.requestAnimationFrame` ではなく、
+    // セッションの `requestAnimationFrame` に応じて描画する。
+    // 理由は以下の通り。
+    //
+    // - `window.requestAnimationFrame` の FPS はブラウザーの内部実装で最大 60 に抑えられているが、
+    //   `xrSession.requestAnimationFrame` はデバイスの画面リフレッシュレートにに応じる
+    // - `xrSession.requestAnimationFrame` では、第2引数として `xrFrame` を受け取ることができる。
+    //   `xrFrame` は `window.requestAnimationFrame` には存在しない。
+    xrSession.requestAnimationFrame( onDrawFrame );
+
+    const orientation = new THREE.Quaternion();
+    const rotX = new THREE.Quaternion();
+    const rotY = new THREE.Quaternion();
+    const xAxis = Object.freeze( new THREE.Vector3( 1, 0, 0 ) );
+    const yAxis = Object.freeze( new THREE.Vector3( 0, 1, 0 ) );
+
+    function onDrawFrame( timestamp, xrFrame ) {
+
+      xrSession.requestAnimationFrame( onDrawFrame );
+      // 姿勢を取り出す。行列（matrix）の要素が格納された配列で受け取ることができる。
+
+      // マウスから入力された値から、回転用のクォータニオンを作る
+      rotX.setFromAxisAngle( xAxis, lookPitch );
+      rotY.setFromAxisAngle( yAxis, lookYaw );
+      orientation.copy( rotX ).multiply( rotY );
+
+      // マウスから入力された回転を、XR 用のオブジェクトに変換する
+      // 位置はベクター3、回転はクォータニオンで渡す。
+      const xform = new XRRigidTransform(
+        new DOMPointReadOnly( 0, 0, - 1 ),
+        DOMPointReadOnly.fromPoint( orientation ),
+      );
+      // 位置、回転を適用した、新たな referenceSpace を作る
+      const xformedReferenceSpace = referenceSpace.getOffsetReferenceSpace( xform );
+
+      // referenceSpace ではなく、
+      // getOffsetReferenceSpace によって得られた、「新しい referenceSpace」を利用する
+      const pose = xrFrame.getViewerPose( xformedReferenceSpace );
+
+      // 現実の風景をWebGLのフレームバッファーに転写する
+      // ただし、xrWebGLLayer.framebuffer の内容はなにもないので、以下はなくても構わない。
+      gl.bindFramebuffer( gl.FRAMEBUFFER, xrWebGLLayer.framebuffer );
+
+      if ( ! pose ) return;
+
+      // if the xrSession is for both right and left eyes, length of views would be 2.
+      // if not, length is 1,
+      pose.views.forEach( ( view ) => {
+
+        const viewport = xrWebGLLayer.getViewport( view );
+        renderer.setSize( viewport.width, viewport.height );
+
+        camera.matrix.fromArray( view.transform.matrix );
+        camera.projectionMatrix.fromArray( view.projectionMatrix );
+        camera.updateMatrixWorld( true );
+
+        renderer.clearDepth();
+        renderer.render( scene, camera );
+
+      } );
+
+    }
+
+  }
+
+} )();
+</script>
+
+</body>
+</html>
