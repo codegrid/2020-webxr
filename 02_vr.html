@@ -62,6 +62,8 @@ const $button = document.getElementById( 'startButton' );
       new THREE.MeshNormalMaterial()
     );
     scene.add( box );
+    // 1メートル手前に配置する
+    box.position.z = - 1;
 
     // 「デバイスのカメラから取り込まれた現実の風景」の受け先となる、baseLayer を作る。
     const xrWebGLLayer = new XRWebGLLayer( xrSession, gl );
@@ -95,10 +97,13 @@ const $button = document.getElementById( 'startButton' );
       // 現実の風景をWebGLのフレームバッファーに転写する
       gl.bindFramebuffer( gl.FRAMEBUFFER, xrWebGLLayer.framebuffer );
 
+
       if ( ! pose ) return;
 
-      // if the xrSession is for both right and left eyes, length of views would be 2.
-      // if not, length is 1,
+      // レンダリング前にクリアする
+      renderer.clearDepth();
+
+      // 両目用で2回ループが行わっれる。
       pose.views.forEach( ( view ) => {
 
         const viewport = xrWebGLLayer.getViewport( view );
@@ -108,7 +113,10 @@ const $button = document.getElementById( 'startButton' );
         camera.projectionMatrix.fromArray( view.projectionMatrix );
         camera.updateMatrixWorld( true );
 
-        renderer.clearDepth();
+        // WebGLの描画すべき範囲として
+        // ここでは、左半分だけ、または右半分だけが取得できる。
+        // これを gl コンテキストの viewport にセットする。
+        renderer.setViewport ( viewport.x, viewport.y, viewport.width, viewport.height ) ;
         renderer.render( scene, camera );
 
       } );
