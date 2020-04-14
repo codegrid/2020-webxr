@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>=^.^=</title>
+<style>
+body {margin: 0;}
+canvas{display: block;}
+</style>
+</head>
+<body>
+
+<canvas id="xrCanvas"></canvas>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.113.2/build/three.module.js';
+import { ARButton } from 'https://unpkg.com/three@0.113.2/examples/jsm/webxr/ARButton.js';
+
+const width  = window.innerWidth;
+const height = window.innerHeight;
+
+const renderer = new THREE.WebGLRenderer( { canvas: xrCanvas, alpha: !true } );
+renderer.autoClear = false;
+renderer.xr.enabled = true;
+renderer.setSize( width, height );
+
+const $button = ARButton.createButton( renderer );
+document.body.appendChild( $button );
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera();
+
+scene.add( new THREE.GridHelper( 100, 100 ) );
+
+const box = new THREE.Mesh(
+  new THREE.BoxBufferGeometry( .2, .2, .2 ),
+  new THREE.MeshNormalMaterial()
+);
+scene.add( box );
+
+renderer.setAnimationLoop( () => {
+
+  renderer.render( scene, camera );
+
+} );
+</script>
+
+</body>
+</html>
